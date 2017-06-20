@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
 import os
 import sys
@@ -6,6 +7,7 @@ import re
 import urllib
 import logging
 import pytz
+import time
 import argparse
 import sqlite3
 import twitter
@@ -38,6 +40,8 @@ RSS_URL = "http://db.cs.cmu.edu/files/" + RSS_FILE
 BASE_URL = "http://www.vldb.org/pvldb/"
 
 DB_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), "pvldb.db")
+
+TWITTER_SLEEP_TIME = 5 # seconds
 
 dateFormat = "%B %Y"
 dateRe = re.compile("Volume ([\d]+), No\. ([\d]+), ([A-Z][a-z]+ [\d]{4})")
@@ -156,39 +160,69 @@ def writeRSS(papers, output):
     fg.link( href='http://www.vldb.org/pvldb/', rel='alternate' )
     fg.language('en')
     
-    for d in reversed(sorted(papers.keys())):
-        date = d.replace(tzinfo=pytz.utc)
-        volume = VOLUME_LABELS[d][0]
-        number = VOLUME_LABELS[d][1]
-        for p in papers[d]:
-            summary = "%s\nAuthors: %s\nPVLDB Volume %d, Number %d" % (p[1], p[0], volume, number)
-            
-            fe = fg.add_entry()
-            fe.author(name=p[0])
-            fe.title(p[1])
-            fe.link(href=p[2]) 
-            fe.id(p[2])
-            fe.published(published=date)
-            fe.description(description=summary, isSummary=True)
-        ## FOR
+    for p in papers:
+        summary = "%(title)s\nAuthors: %(authors)s\nPVLDB Volume %(volume)d, Number %(number)d" % p
+        
+        fe = fg.add_entry()
+        fe.author(name=p["authors"])
+        fe.title(p["title"])
+        fe.link(href=p["link"]) 
+        fe.id(p["link"])
+        fe.published(published=p["published"])
+        fe.description(description=summary, isSummary=True)
     ## FOR
     
     atomfeed = fg.atom_str(pretty=True) # Get the ATOM feed as string
-    fg.atom_file('pvldb-atom.xml') # Write the ATOM feed to a file
+    atom_file = os.path.join(output, 'pvldb-atom.xml')
+    fg.atom_file(atom_file) # Write the ATOM feed to a file
+    LOG.info("Created ATOM '%s'" % atom_file)
     
     rssfeed  = fg.rss_str(pretty=True) # Get the RSS feed as string
-    fg.rss_file(RSS_FILE) # Write the RSS feed to a file
-    
+    rss_file = os.path.join(output, RSS_FILE)
+    fg.rss_file(rss_file) # Write the RSS feed to a file
+    LOG.info("Created RSS '%s'" % rss_file)
 ## DEF
 
 ## ==============================================
 ## postTwitter
 ## ==============================================
-def postTwitter(args, paper):
+def postTwitter(args, db, paper):
+    LOG.info("Posting paper '%s' to twitter!" % paper["title"])
+    
     api = twitter.Api(consumer_key=args["twitter_consumer_key"],
                       consumer_secret=args["twitter_consumer_secret"],
                       access_token_key=args["twitter_access_token"],
                       access_token_secret=args["twitter_access_secret"])
+    
+    # Always show the full title + link to paper.
+    # We will truncate the author list
+    #remaining = 140 - (
+                #len(paper["title"]) +
+                #23 + # url
+                #4) # space(3x) + separator
+      
+    #authors = paper["authors"]
+    #authors = (authors[:remaining-3] + '...') if len(authors) > remaining else authors
+      
+    # 2734
+    paper["separator"] = u"→".encode('unicode-escape')
+      
+    tweet = u"Vol:%(volume)d No:%(number)d → %(title)s" % paper
+    if len(tweet)+24 > 140:
+        remaining = 140 - (len(tweet)+24)
+        tweet = tweet[:remaining-3] + u"..."
+    tweet += " " + paper["link"]
+    
+    LOG.debug("%s [Length=%d]" % (tweet, len(tweet)))
+
+    status = api.PostUpdate(tweet)
+    LOG.info("Posted tweet [status=%s]", str(status))
+    
+    cur = db.cursor()
+    sql = "UPDATE papers SET twitter = 1 WHERE link = ?"
+    cur.execute(sql, (paper["link"], ))
+    db.commit()
+    
 ## DEF
 
 
@@ -224,6 +258,10 @@ if __name__ == '__main__':
     aparser.add_argument('dbpath', help='Database Path')
     aparser.add_argument("--debug", action='store_true')
 
+    ## Collection Parameters
+    agroup = aparser.add_argument_group('Collection Parameters')
+    agroup.add_argument('--collect', action='store_true', help='Collect results from PVLDB website')
+
     ## RSS Parameters
     agroup = aparser.add_argument_group('RSS Parameters')
     agroup.add_argument('--rss', action='store_true', help='Genereate RSS/Atom file')
@@ -244,7 +282,6 @@ if __name__ == '__main__':
     if args['debug']:
         LOG.setLevel(logging.DEBUG)
 
-    
     # If they want to post to twitter, make sure they give us all the info
     # that we need to do this
     if args["twitter"]:
@@ -265,44 +302,79 @@ if __name__ == '__main__':
     cur = db.cursor()
         
     # Get the volume URLs
-    volumes = getVolumeUrls(BASE_URL)
-    papers = { }
-    for v in volumes:
-        try:
-            p = getPapers(v)
-            papers.update(p)
-        except:
-            logging.error("Unexpected error for " + v)
-            raise
-    #pprint(papers)
+    if args["collect"]:
+        volumes = getVolumeUrls(BASE_URL)
+        papers = { }
+        for v in volumes:
+            try:
+                p = getPapers(v)
+                papers.update(p)
+            except:
+                logging.error("Unexpected error for " + v)
+                raise
     
+        # Figure out what papers are new
+        for d in reversed(sorted(papers.keys())):
+            for p in papers[d]:
+                sql = "SELECT * FROM papers WHERE link = ?"
+                cur.execute(sql, (p["link"],))
+                row = cur.fetchone()
+                if row is None:
+                    LOG.debug("Adding %s" % p["link"])
+                    
+                    sql = """INSERT INTO papers (
+                                link, title, authors, volume, number, published
+                            ) VALUES (
+                                ?, ?, ?, ?, ?, ?)"""
+                    cur.execute(sql, (p["link"], p["title"], p["authors"], p["volume"], p["number"], p["published"],))
+            ## FOR
+        ## FOR
+        db.commit()
+    ## IF
+
+    ## Post new papers to Twitter
+    if args["twitter"]:
+        sql = "SELECT * FROM papers WHERE twitter = 0 ORDER BY link"
+        new_papers = [ ]
+        for row in cur.execute(sql):
+            paper = {
+                "link":     row[0],
+                "title":    row[1],
+                "authors":  row[2],
+                "volume":   row[3],
+                "number":   row[4],
+                "published":row[5],
+            }
+            new_papers.append(paper)
+        ## FOR
+        for paper in new_papers:
+            postTwitter(args, db, paper)
+            LOG.warn("Sleeping for %d seconds..." % TWITTER_SLEEP_TIME)
+            time.sleep(TWITTER_SLEEP_TIME)
+        ## FOR
+    ## IF
+
     # Always create the RSS files from scratch
     if args["rss"]:
-        assert args["rss-path"]
-        writeRSS(papers, args["rss-path"])
-    
-    # Figure out what papers are new
-    new_papers = [ ]
-    for d in reversed(sorted(papers.keys())):
-        for p in papers[d]:
-            sql = "SELECT * FROM papers WHERE link = ?"
-            cur.execute(sql, (p["link"],))
-            row = cur.fetchone()
-            if row is None:
-                print "Adding", p["link"]
-                
-                sql = """INSERT INTO papers (
-                            link, title, authors, volume, number, published
-                        ) VALUES (
-                            ?, ?, ?, ?, ?, ?)"""
-                cur.execute(sql, (p["link"], p["title"], p["authors"], p["volume"], p["number"], p["published"],))
-                new_papers.append(p)
+        assert args["rss_path"]
+        
+        sql = "SELECT * FROM papers ORDER BY volume DESC, number DESC, link"
+        papers = [ ]
+        for row in cur.execute(sql):
+            paper = {
+                "link":     row[0],
+                "title":    row[1],
+                "authors":  row[2],
+                "volume":   row[3],
+                "number":   row[4],
+                "published":row[5],
+            }
+            papers.append(paper)
         ## FOR
-    ## FOR
-    db.commit()
+        writeRSS(papers, args["rss_path"])
+    ## IF
     
     db.close()
-    
 ## MAIN
     
     
