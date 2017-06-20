@@ -41,7 +41,7 @@ BASE_URL = "http://www.vldb.org/pvldb/"
 
 DB_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), "pvldb.db")
 
-TWITTER_SLEEP_TIME = 5 # seconds
+TWITTER_SLEEP_TIME = 600 # seconds
 
 dateFormat = "%B %Y"
 dateRe = re.compile("Volume ([\d]+), No\. ([\d]+), ([A-Z][a-z]+ [\d]{4})")
@@ -115,8 +115,8 @@ def getPapers(vol_url):
                         try:
                             authors = authors.strip()[:-1]
                         except:
-                            logging.error("authors=" + str(type(authors)))
-                            logging.error("authors.text=" + str(authors.text))
+                            LOG.error("authors=" + str(type(authors)))
+                            LOG.error("authors.text=" + str(authors.text))
                             raise
                         url = link["href"]
                         if not url.startswith("http://"):
@@ -138,10 +138,10 @@ def getPapers(vol_url):
                 ## FOR
                 break
             except:
-                logging.error("Unexpected error for section '" + s.text + "'")
-                logging.error("link=" + str(link))
-                logging.error("p=" + str(p))
-                #logging.error("authors=" + str(authors))
+                LOG.error("Unexpected error for section '" + s.text + "'")
+                LOG.error("link=" + str(link))
+                LOG.error("p=" + str(p))
+                #LOG.error("authors=" + str(authors))
                 raise
         ## FOR
     ## FOR
@@ -194,18 +194,7 @@ def postTwitter(args, db, paper):
                       access_token_key=args["twitter_access_token"],
                       access_token_secret=args["twitter_access_secret"])
     
-    # Always show the full title + link to paper.
-    # We will truncate the author list
-    #remaining = 140 - (
-                #len(paper["title"]) +
-                #23 + # url
-                #4) # space(3x) + separator
-      
-    #authors = paper["authors"]
-    #authors = (authors[:remaining-3] + '...') if len(authors) > remaining else authors
-      
-    # 2734
-    paper["separator"] = u"→".encode('unicode-escape')
+    #paper["separator"] = u"→".encode('unicode-escape')
       
     tweet = u"Vol:%(volume)d No:%(number)d → %(title)s" % paper
     if len(tweet)+24 > 140:
@@ -310,7 +299,7 @@ if __name__ == '__main__':
                 p = getPapers(v)
                 papers.update(p)
             except:
-                logging.error("Unexpected error for " + v)
+                LOG.error("Unexpected error for " + v)
                 raise
     
         # Figure out what papers are new
