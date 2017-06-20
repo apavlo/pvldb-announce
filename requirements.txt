@@ -1,0 +1,4 @@
+beautifulsoup4==4.4.1
+feedgen==0.4.0
+python-twitter==3.3
+pytz==2014.10
