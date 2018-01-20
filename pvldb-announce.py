@@ -41,10 +41,10 @@ BASE_URL = "http://www.vldb.org/pvldb/"
 
 DB_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), "pvldb.db")
 
-TWITTER_SLEEP_TIME = 600 # seconds
+TWITTER_SLEEP_TIME = 1200 # seconds
 
 dateFormat = "%B %Y"
-dateRe = re.compile("Volume ([\d]+), No\. ([\d]+), ([A-Z][a-z]+ [\d]{4})")
+dateRe = re.compile("Volume ([\d]+), No\.[\s]?([\d]+), ([A-Z][a-z]+ [\d]{4})")
 
 SKIP = set([ "vol%d.html" % x for x in xrange(1, 5) ])
 
@@ -73,6 +73,8 @@ def getVolumeUrls(url):
 ## getPapers
 ## ==============================================
 def getPapers(vol_url):
+    LOG.debug("Retreiving papers for %s" % vol_url)
+    
     r = urllib.urlopen(vol_url).read()
     soup = BeautifulSoup(r, "lxml")
     
@@ -80,6 +82,7 @@ def getPapers(vol_url):
     for s in soup.find_all('h2'):
         sectionDate = None
         m = dateRe.match(s.text)
+        LOG.debug("Processing header '%s'" % s.text)
         if m:
             sectionDate = datetime.strptime(m.groups()[2], dateFormat)
             volume = int(m.groups()[0])
