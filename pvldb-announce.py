@@ -42,6 +42,7 @@ BASE_URL = "http://www.vldb.org/pvldb/"
 DB_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), "pvldb.db")
 
 TWITTER_SLEEP_TIME = 1200 # seconds
+TWITTER_NUM_CHARS = 250
 
 dateFormat = "%B %Y"
 dateRe = re.compile("Volume ([\d]+), No\.[\s]?([\d]+), ([A-Z][a-z]+ [\d]{4})")
@@ -200,8 +201,8 @@ def postTwitter(args, db, paper):
     #paper["separator"] = u"→".encode('unicode-escape')
       
     tweet = u"Vol:%(volume)d No:%(number)d → %(title)s" % paper
-    if len(tweet)+24 > 140:
-        remaining = 140 - (len(tweet)+24)
+    if len(tweet)+24 > TWITTER_NUM_CHARS:
+        remaining = TWITTER_NUM_CHARS - (len(tweet)+24)
         tweet = tweet[:remaining-3] + u"..."
     tweet += " " + paper["link"]
     
