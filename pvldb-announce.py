@@ -60,6 +60,10 @@ def getVolumeUrls(url):
     soup = BeautifulSoup(r, "lxml")
     regex = re.compile("vol[\d]+\.html")
     for a in soup.find_all('a'):
+        if not "href" in a.attrs:
+            # pprint(a.__dict__)
+            logging.warn("No 'href' tag found. Skipping '%s'" % str(a))
+            continue
         m = regex.match(a["href"])
         if m and not a["href"] in volumes:
             if a["href"] in SKIP:
@@ -89,7 +93,9 @@ def getPapers(vol_url):
             volume = int(m.groups()[0])
             number = int(m.groups()[1])
             VOLUME_LABELS[sectionDate] = (volume, number)
-        assert not sectionDate is None
+        if sectionDate is None:
+            LOG.debug("Skipping invalid header '%s'" % s.text)
+            continue
         
         if not sectionDate in papers:
             papers[sectionDate] = [ ]
@@ -98,6 +104,10 @@ def getPapers(vol_url):
         # VOL6 Fix
         if vol_url.find("vol6.html") != -1:
             ul_search = ul_search.find_next('ul')
+            
+        if ul_search is None:
+            LOG.debug("Failed to find any papers under header '%s'" % s.text)
+            continue
             
         for u in ul_search:
             skip = False
@@ -267,6 +277,7 @@ if __name__ == '__main__':
     agroup.add_argument('--twitter-consumer-secret', type=str, help='Twitter Consumer Secret')
     agroup.add_argument('--twitter-access-token', type=str, help='Twitter Access Token Key')
     agroup.add_argument('--twitter-access-secret', type=str, help='Twitter Access Token Secret')
+    agroup.add_argument('--twitter-limit', type=int, help='Number of papers to announce before stopping')
     
     args = vars(aparser.parse_args())
 
@@ -280,7 +291,7 @@ if __name__ == '__main__':
     if args["twitter"]:
         LOG.debug("Checking twitter input arguments")
         for k in args.keys():
-            if k.startswith("twitter") and args[k] is None:
+            if k.startswith("twitter") and k != "twitter_limit" and args[k] is None:
                 LOG.error("Missing '%s' input parameter for Twitter" % k)
                 sys.exit(1)
         ## FOR
@@ -340,8 +351,12 @@ if __name__ == '__main__':
             }
             new_papers.append(paper)
         ## FOR
+        paper_count = 0
         for paper in new_papers:
             postTwitter(args, db, paper)
+            paper_count += 1
+            if args["twitter_limit"] and paper_count > args["twitter_limit"]:
+                break
             LOG.warn("Sleeping for %d seconds..." % TWITTER_SLEEP_TIME)
             time.sleep(TWITTER_SLEEP_TIME)
         ## FOR
