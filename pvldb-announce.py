@@ -350,6 +350,7 @@ if __name__ == '__main__':
     agroup.add_argument('--twitter-access-token', type=str, help='Twitter Access Token Key')
     agroup.add_argument('--twitter-access-secret', type=str, help='Twitter Access Token Secret')
     agroup.add_argument('--twitter-limit', type=int, help='Number of papers to announce before stopping')
+    agroup.add_argument('--twitter-preference', type=str, help='Author ordering preference')
     
     args = vars(aparser.parse_args())
 
@@ -363,7 +364,7 @@ if __name__ == '__main__':
     if args["twitter"]:
         LOG.debug("Checking twitter input arguments")
         for k in args.keys():
-            if k.startswith("twitter") and k != "twitter_limit" and args[k] is None:
+            if k.startswith("twitter") and k not in ("twitter_limit", "twitter_preference") and args[k] is None:
                 LOG.error("Missing '%s' input parameter for Twitter" % k)
                 sys.exit(1)
         ## FOR
@@ -412,7 +413,11 @@ if __name__ == '__main__':
 
     ## Post new papers to Twitter
     if args["twitter"]:
-        sql = "SELECT * FROM papers WHERE twitter = 0 ORDER BY link"
+        sql = "SELECT * FROM papers WHERE twitter = 0 "
+        if 'twitter_preference' in args and args['twitter_preference']:
+            sql += "ORDER BY CASE WHEN authors LIKE '%" + args['twitter_preference'] + "%' THEN NULL ELSE link END DESC"
+        else:
+            sql += "ORDER BY link"
         new_papers = [ ]
         for row in cur.execute(sql):
             paper = {
