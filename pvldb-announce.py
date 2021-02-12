@@ -190,7 +190,7 @@ def getPapers(vol_url):
                     LOG.debug("url=%s", url)
                     
                     # Title
-                    title = link.contents[1].replace("\n", " ").strip()
+                    title = link.contents[-1].replace("\n", " ").strip()
                     LOG.debug("title=%s", title)
                     
                     # Author
