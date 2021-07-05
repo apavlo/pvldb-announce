@@ -112,7 +112,9 @@ def getPapers(vol_url):
         m = dateRe.match(s.text)
         LOG.debug("Processing header '%s'" % s.text)
         if m:
-            sectionDate = datetime.strptime(m.groups()[2], dateFormat)
+            # HACK
+            sectionHeader = m.groups()[2].replace("Jun 2021", "June 2021")
+            sectionDate = datetime.strptime(sectionHeader, dateFormat)
             volume = int(m.groups()[0])
             number = int(m.groups()[1])
             VOLUME_LABELS[sectionDate] = (volume, number)
