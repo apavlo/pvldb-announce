@@ -44,10 +44,9 @@ BASE_URL = "http://www.vldb.org"
 
 DB_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), "pvldb.db")
 
-TWITTER_SLEEP_TIME = 1200 # seconds
+TWITTER_SLEEP_TIME = 600 # seconds
 TWITTER_NUM_CHARS = 250
 
-dateFormat = "%B %Y"
 dateRe = re.compile("Volume ([\d]+), No\.[\s]?([\d]+), ([A-Z][a-z]+ [\d]{4})")
 
 SKIP = set([ "vol%d.html" % x for x in xrange(1, 5) ])
@@ -112,12 +111,21 @@ def getPapers(vol_url):
         m = dateRe.match(s.text)
         LOG.debug("Processing header '%s'" % s.text)
         if m:
-            # HACK
-            sectionHeader = m.groups()[2].replace("Jun 2021", "June 2021")
-            sectionDate = datetime.strptime(sectionHeader, dateFormat)
             volume = int(m.groups()[0])
             number = int(m.groups()[1])
+            sectionHeader = m.groups()[2]
+            
+            dateFormats = ["%B %Y", "%b %Y"]
+            for df in dateFormats:
+                try:
+                    sectionDate = datetime.strptime(sectionHeader, df)
+                except:
+                    pass
+            if sectionDate is None:
+                raise Exception("Unexpected section date header '%s'" % sectionHeader)
+
             VOLUME_LABELS[sectionDate] = (volume, number)
+        
         if sectionDate is None:
             LOG.debug("Skipping invalid header '%s'" % s.text)
             continue
@@ -415,11 +423,13 @@ if __name__ == '__main__':
 
     ## Post new papers to Twitter
     if args["twitter"]:
-        sql = "SELECT * FROM papers WHERE twitter = 0 "
+        sql = "SELECT * FROM papers WHERE twitter = 0 ORDER BY volume ASC, number ASC, "
         if 'twitter_preference' in args and args['twitter_preference']:
-            sql += "ORDER BY CASE WHEN authors LIKE '%" + args['twitter_preference'] + "%' THEN NULL ELSE link END DESC"
+            sql += "CASE WHEN authors LIKE '%" + args['twitter_preference'] + "%' THEN NULL ELSE link END DESC"
         else:
-            sql += "ORDER BY link"
+            sql += "link"
+        LOG.debug(sql)
+            
         new_papers = [ ]
         for row in cur.execute(sql):
             paper = {
