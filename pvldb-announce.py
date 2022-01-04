@@ -60,7 +60,7 @@ def getVolumeUrls(url):
     volumes = [ ]
     
     # Brute force search for volumes
-    for vol in xrange(14,15):
+    for vol in xrange(15,16):
         url = START_URL % vol
         LOG.debug("Checking whether volume '%s' exists" % url)
         try:
@@ -205,6 +205,8 @@ def getPapers(vol_url):
                     
                     # Author
                     authors = li.next_element
+                    if authors.name == "div":
+                        authors = authors.next_element
                     #pprint(authors.string)
                     
                     try:
@@ -215,12 +217,14 @@ def getPapers(vol_url):
                         raise
                     LOG.debug("authors=%s", authors)
                     
-                    # Hack: If there is no authors, then we're in the wrong li entry
+                    # HACK: If there is no authors, then we're in the wrong li entry
                     if not authors:
                         LOG.debug("No author list was found. Skipping...")
                         continue
-
                     #print
+                
+                    # Rewrite http to https because it is 2022
+                    url = url.replace("http:", "https:")
                 
                     papers[sectionDate].append({
                         "authors":      authors,
@@ -326,7 +330,8 @@ def createDatabase():
         volume INT NOT NULL,
         number INT NOT NULL,
         published DATE NOT NULL,
-        twitter INT NOT NULL DEFAULT 0
+        twitter INT NOT NULL DEFAULT 0,
+        created timestamp DEFAULT CURRENT_TIMESTAMP
     );"""
     cur.execute(sql)
     db.commit()
