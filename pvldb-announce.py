@@ -47,7 +47,7 @@ DB_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), "pvldb.db")
 TWITTER_SLEEP_TIME = 1200 # seconds
 TWITTER_NUM_CHARS = 250
 
-dateRe = re.compile("Volume ([\d]+), No\.[\s]?([\d]+), ([A-Z][a-z]+ [\d]{4})")
+dateRe = re.compile("Volume ([\d]+), No\.[\s]?([\d]+)") # , ([A-Z][a-z]+ [\d]{4})")
 
 SKIP = set([ "vol%d.html" % x for x in xrange(1, 5) ])
 
@@ -65,7 +65,8 @@ def getVolumeUrls(url):
         LOG.debug("Checking whether volume '%s' exists" % url)
         try:
             r = urllib.urlopen(url).read()
-            if not url in volumes: volumes.append(url)
+            if not url in volumes:
+                volumes.append(url)
         except:
             LOG.debug("Volume #%d does not exist. Skipping..." % vol)
             pass
@@ -97,156 +98,89 @@ def getVolumeUrls(url):
 ## DEF
 
 ## ==============================================
+## getPapersFromDiv
+## ==============================================
+def getPapersFromDiv(volume, number, div):
+    papers = [ ]
+    paper_divs = div.find_all(class_="shadow-app")
+    if paper_divs is None:
+        LOG.warn("Failed to find any papers in DIV '%s'" % div.text)
+        return papers
+
+    for paper_div in paper_divs:
+        data = [ ]
+        # pprint(paper_div.__dict__)
+        # print("="*100)
+
+        try:
+            # Pages, Authors
+            results = paper_div.find_all('p')
+            for element in results:
+                # print("*"*60)
+                # pprint(element.__dict__)
+                data.append(element.contents[0])
+            ## FOR
+
+            # Title
+            results = paper_div.find_all('h5')
+            for element in results:
+                # print("*"*60)
+                # pprint(element.__dict__)
+                data.append(element.contents[0])
+
+            # Paper PDF URL
+            results = paper_div.find_all('a')
+            for element in results:
+                url = element["href"].replace("http:", "https:")
+                data.append(url)
+
+            # print("%"*30)
+            # pprint(data)
+
+            papers.append({
+                "authors":      data[1],
+                "title":        data[2],
+                "volume":       volume,
+                "number":       number,
+                "link":         data[3],
+                "published":    datetime.today().replace(tzinfo=pytz.utc),
+            })
+            LOG.debug("Found new paper for 'Vol:%d, Number:%d'\n%s", volume, number, pformat(papers[-1]))
+        except:
+            LOG.error("Unexpected error for 'Vol:%d, Number:%d' DIV", volume, number)
+            raise
+    ## FOR
+    return papers
+## DEF
+
+
+## ==============================================
 ## getPapers
 ## ==============================================
-def getPapers(vol_url):
+def getPapers(volume, vol_url):
     LOG.debug("Retreiving papers for %s" % vol_url)
-    
+
+    html = None
+    # with open("/tmp/pvldb.html", "r") as fd:
+    #     html = fd.read()
     r = urllib.urlopen(vol_url).read()
     soup = BeautifulSoup(r, "lxml")
-    
-    papers = { }
-    for s in soup.find_all('h2'):
-        sectionDate = None
-        m = dateRe.match(s.text)
-        LOG.debug("Processing header '%s'" % s.text)
-        if m:
-            volume = int(m.groups()[0])
-            number = int(m.groups()[1])
-            sectionHeader = m.groups()[2]
-            
-            dateFormats = ["%B %Y", "%b %Y"]
-            for df in dateFormats:
-                try:
-                    sectionDate = datetime.strptime(sectionHeader, df)
-                except:
-                    pass
-            if sectionDate is None:
-                raise Exception("Unexpected section date header '%s'" % sectionHeader)
 
-            VOLUME_LABELS[sectionDate] = (volume, number)
-        
-        if sectionDate is None:
-            LOG.debug("Skipping invalid header '%s'" % s.text)
-            continue
-        
-        if not sectionDate in papers:
-            papers[sectionDate] = [ ]
-        
-        #pprint(s.__dict__)
-        #print("*"*100)
-        
-        ul_search = s.find_next('ul')
-        # VOL6 Fix
-        #if vol_url.find("vol6.html") != -1:
-            #ul_search = ul_search.find_next('ul')
-        # VOL14 Fix
-        if vol_url.find("vol14-volume") != -1:
-            ul_search = s.find_next_siblings('ul')
-            
-        if ul_search is None:
-            LOG.debug("Failed to find any papers under header '%s'" % s.text)
-            continue
-            
-        for u in ul_search:
-            #pprint(u.__dict__)
-            #print("="*100)
-            
-            skip = False
-            try:
-                li_search = None
-                if vol_url.find("vol14-volume") != -1:
-                    li_search = u.find_all('li')
-                else:
-                    li_search = u.parent.find_all('li')
-                
-                for li in li_search:
-                    #print("*"*60)
-                    #pprint(li.__dict__)
-                    
-                    if li.text.find("Editors-in-Chief") != -1:
-                        skip = True
-                    if skip: continue
-                        
-                    url = None
-                    title = None
-                    authors = None
-                    
-                    if vol_url.find("vol14-volume") != -1:
-                        #link = li.parent("a")
-                        link = li.find("a")
-                    else:
-                        link = li.find("a")
-                    
-                    #print("="*100)
-                    #pprint(link.__dict__)
-                    
-                    if not link or li.next_element is None: continue
-                
-                    if link.text.find("Front Matter") != -1:
-                        LOG.debug("Skipping front matter entry %s", link["href"])
-                        continue
-                    
-                    # Paper PDF URL
-                    url = link["href"]
-                    LOG.debug("orig_url=%s", url)
-                    
-                    # URL fixes when they switched to wordpress
-                    if url.find("/pvldb_wp/archive") != -1:
-                        url = url.replace("/pvldb_wp/archive", "/pvldb")
-                    if url.find("www.vldb.org/") == -1:
-                        url = url.replace("vldb.org/", "www.vldb.org/")
-                    if not url.startswith("http"):
-                        url = BASE_URL + url
-                    if url is None: continue
-                    LOG.debug("url=%s", url)
-                    
-                    # Title
-                    title = link.contents[-1].replace("\n", " ").strip()
-                    LOG.debug("title=%s", title)
-                    
-                    # Author
-                    authors = li.next_element
-                    if authors.name == "div":
-                        authors = authors.next_element
-                    #pprint(authors.string)
-                    
-                    try:
-                        authors = authors.strip()[:-1]
-                    except:
-                        LOG.error("authors=" + str(type(authors)))
-                        LOG.error("authors.text=" + str(authors.text))
-                        raise
-                    LOG.debug("authors=%s", authors)
-                    
-                    # HACK: If there is no authors, then we're in the wrong li entry
-                    if not authors:
-                        LOG.debug("No author list was found. Skipping...")
-                        continue
-                    #print
-                    
-                    # Rewrite http to https because it is 2022
-                    url = url.replace("http:", "https:")
-                
-                    papers[sectionDate].append({
-                        "authors":      authors,
-                        "title":        title,
-                        "volume":       volume,
-                        "number":       number,
-                        "link":         url,
-                        "published":    sectionDate.replace(tzinfo=pytz.utc)
-                    })
-                    LOG.debug("Found new paper for '%s'\n%s", sectionDate, pformat(papers[sectionDate][-1]))
-                ## FOR
-                #break
-            except:
-                LOG.error("Unexpected error for section '" + s.text + "'")
-                LOG.error("link=" + str(link))
-                LOG.error("li=" + str(li))
-                #LOG.error("authors=" + str(authors))
-                raise
-        ## FOR
-    ## FOR
+    number = 1
+    papers = { }
+    while True:
+        LOG.debug("Looking for 'Vol:%d, Number:%d' DIV", volume, number)
+        div = soup.find('div', {"id": "issue-%d" % number})
+        if not div:
+            break
+
+        key = (volume, number)
+        papers[key] = getPapersFromDiv(volume, number, div)
+        if len(papers[key]) > 0:
+            LOG.debug("Found %d papers for 'Vol:%d, Number:%d'\n%s", len(papers[key]), volume, number, pformat(papers))
+
+        number = number + 1
+    ## WHILE
     return (papers)
 ## DEF
 
@@ -353,6 +287,8 @@ if __name__ == '__main__':
     ## Collection Parameters
     agroup = aparser.add_argument_group('Collection Parameters')
     agroup.add_argument('--collect', action='store_true', help='Collect results from PVLDB website')
+    agroup.add_argument('--collect-start', type=int, help='Start volume to check')
+    agroup.add_argument('--collect-stop', type=int, help='Stop volume to check (inclusive)')
 
     ## RSS Parameters
     agroup = aparser.add_argument_group('RSS Parameters')
@@ -397,21 +333,14 @@ if __name__ == '__main__':
         
     # Get the volume URLs
     if args["collect"]:
-        volumes = getVolumeUrls(START_URL)
         papers = { }
-        for v in volumes:
-            #print(v)
-            #continue
-            try:
-                p = getPapers(v)
-                papers.update(p)
-            except:
-                LOG.error("Unexpected error for " + v)
-                raise
-    
+        for vol in xrange(args["collect_start"], args["collect_stop"]+1):
+            url = START_URL % vol
+            papers = getPapers(vol, url)
+
         # Figure out what papers are new
-        for d in reversed(sorted(papers.keys())):
-            for p in papers[d]:
+        for key in reversed(sorted(papers.keys())):
+            for p in papers[key]:
                 sql = "SELECT * FROM papers WHERE link = ?"
                 cur.execute(sql, (p["link"],))
                 row = cur.fetchone()
@@ -464,7 +393,7 @@ if __name__ == '__main__':
     if args["rss"]:
         assert args["rss_path"]
         
-        sql = "SELECT * FROM papers ORDER BY volume DESC, number DESC, link"
+        sql = "SELECT * FROM papers ORDER BY volume ASC, number DESC, link"
         papers = [ ]
         for row in cur.execute(sql):
             paper = {
