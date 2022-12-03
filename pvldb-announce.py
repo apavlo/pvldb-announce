@@ -336,10 +336,12 @@ if __name__ == '__main__':
         papers = { }
         for vol in xrange(args["collect_start"], args["collect_stop"]+1):
             url = START_URL % vol
-            papers = getPapers(vol, url)
+            p = getPapers(vol, url)
+            if p: papers.update(p)
 
         # Figure out what papers are new
         for key in reversed(sorted(papers.keys())):
+            LOG.debug("key=%s", key)
             for p in papers[key]:
                 sql = "SELECT * FROM papers WHERE link = ?"
                 cur.execute(sql, (p["link"],))
