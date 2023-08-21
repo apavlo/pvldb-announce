@@ -10,6 +10,7 @@ import pytz
 import time
 import argparse
 import sqlite3
+import json
 from datetime import datetime
 from datetime import tzinfo
 from pprint import pprint, pformat
@@ -54,7 +55,7 @@ def getVolumeUrls(url):
     #for a in soup.find_all('a'):
         #if not "href" in a.attrs:
             ## pprint(a.__dict__)
-            #LOG.warn("No 'href' tag found. Skipping '%s'" % str(a))
+            #LOG.warning("No 'href' tag found. Skipping '%s'" % str(a))
             #continue
         
         #m = regex.search(a["href"])
@@ -64,7 +65,7 @@ def getVolumeUrls(url):
             #print("="*20)
         #if m and not a["href"] in volumes:
             #if a["href"] in SKIP:
-                #LOG.warn("Skipping '%s'" % a["href"])
+                #LOG.warning("Skipping '%s'" % a["href"])
                 #continue
             #volumes.append(a["href"])
     ### FOR
@@ -73,91 +74,50 @@ def getVolumeUrls(url):
 ## DEF
 
 ## ==============================================
-## getPapersFromDiv
-## ==============================================
-def getPapersFromDiv(volume, number, div):
-    papers = [ ]
-    paper_divs = div.find_all(class_="shadow-app")
-    if paper_divs is None:
-        LOG.warn("Failed to find any papers in DIV '%s'" % div.text)
-        return papers
-
-    for paper_div in paper_divs:
-        data = [ ]
-        # pprint(paper_div.__dict__)
-        # print("="*100)
-
-        try:
-            # Pages, Authors
-            results = paper_div.find_all('p')
-            for element in results:
-                # print("*"*60)
-                # pprint(element.__dict__)
-                data.append(element.contents[0])
-            ## FOR
-
-            # Title
-            results = paper_div.find_all('h5')
-            for element in results:
-                # print("*"*60)
-                # pprint(element.__dict__)
-                data.append(element.contents[0])
-
-            # Paper PDF URL
-            results = paper_div.find_all('a')
-            for element in results:
-                url = element["href"].replace("http:", "https:")
-                data.append(url)
-
-            # print("%"*30)
-            # pprint(data)
-
-            papers.append({
-                "authors":      data[1],
-                "title":        data[2],
-                "volume":       volume,
-                "number":       number,
-                "link":         data[3],
-                "published":    datetime.today().replace(tzinfo=pytz.utc),
-            })
-            LOG.debug("Found new paper for 'Vol:%d, Number:%d'\n%s", volume, number, pformat(papers[-1]))
-        except:
-            LOG.error("Unexpected error for 'Vol:%d, Number:%d' DIV", volume, number)
-            raise
-    ## FOR
-    return papers
-## DEF
-
-
-## ==============================================
 ## getPapers
 ## ==============================================
 def getPapers(volume, vol_url):
-    LOG.debug("Retreiving papers for %s" % vol_url)
+    LOG.debug("Retreiving papers for %s", vol_url)
 
+    vol_papers = { }
     html = None
     # with open("/tmp/pvldb.html", "r") as fd:
     #     html = fd.read()
-    r = urllib.request.urlopen(vol_url).read()
-    soup = BeautifulSoup(r, "lxml")
+    html = urllib.request.urlopen(vol_url).read()
+    # with open("/tmp/pvldb.html", "wb") as fd:
+    #     fd.write(html)
+    soup = BeautifulSoup(html, "lxml")
 
-    number = 1
-    papers = { }
-    while True:
-        LOG.debug("Looking for 'Vol:%d, Number:%d' DIV", volume, number)
-        div = soup.find('div', {"id": "issue-%d" % number})
-        if not div:
-            break
+    # They embed a JSON object in the HTML that we can use to extract the data we need
+    # This is way easier than messing around with parsing HTML
+    data = soup.find('script', type="application/json")
+    if not data:
+        LOG.error("Unable to find JSON data from %s", vol_url)
+        return (vol_papers)
 
+    json_data = json.loads(data.contents[0])
+    volume_data = json_data["props"]["pageProps"]["groupedIssues"]
+
+    for number, number_papers in volume_data.items():
+        number = int(number)
+        papers = []
+        LOG.debug("Extracting papers for 'Vol:%d, Number:%d'", volume, number)
+        for paper in number_papers:
+            if paper["title"].lower() == 'front matter': continue
+            LOG.debug(paper)
+            papers.append({
+                "authors":      paper["authors"],
+                "title":        paper["title"],
+                "volume":       volume,
+                "number":       number,
+                "link":         paper["pdf"].replace("http:", "https:"),
+                "published":    datetime.today().replace(tzinfo=pytz.utc),
+            })
         key = (volume, number)
-        papers[key] = getPapersFromDiv(volume, number, div)
-        if len(papers[key]) > 0:
-            LOG.debug("Found %d papers for 'Vol:%d, Number:%d'\n%s", len(papers[key]), volume, number, pformat(papers))
+        vol_papers[key] = papers
+        LOG.debug("Found %d papers for 'Vol:%d, Number:%d'\n%s", len(papers), volume, number, pformat(papers))
 
-        number = number + 1
-    ## WHILE
-    return (papers)
-## DEF
+    return (vol_papers)
 
 ## ==============================================
 ## createDatabase
@@ -181,9 +141,6 @@ def createDatabase():
     cur.execute(sql)
     db.commit()
     db.close()
-    
-## FOR
-
 
 ## ==============================================
 ## main
@@ -192,6 +149,7 @@ if __name__ == '__main__':
     aparser = argparse.ArgumentParser(description='PVLDB Announcements Collection Script')
     aparser.add_argument('dbpath', help='Database Path')
     aparser.add_argument("--debug", action='store_true')
+    aparser.add_argument("--dry-run", action='store_true')
 
     ## Collection Parameters
     agroup = aparser.add_argument_group('Collection Parameters')
@@ -222,8 +180,9 @@ if __name__ == '__main__':
 
     # Figure out what papers are new
     for key in reversed(sorted(papers.keys())):
-        LOG.debug("key=%s", key)
+        LOG.debug("KEY=%s -> #papers=%d", key, len(papers[key]))
         for p in papers[key]:
+            LOG.debug("Checking whether paper '%s' already exists...", os.path.basename(p["link"]))
             sql = "SELECT * FROM papers WHERE link = ?"
             cur.execute(sql, (p["link"],))
             row = cur.fetchone()
@@ -234,7 +193,10 @@ if __name__ == '__main__':
                             link, title, authors, volume, number, published
                         ) VALUES (
                             ?, ?, ?, ?, ?, ?)"""
-                cur.execute(sql, (p["link"], p["title"], p["authors"], p["volume"], p["number"], p["published"],))
+                if not args["dry_run"]:
+                    cur.execute(sql, (p["link"], p["title"], p["authors"], p["volume"], p["number"], p["published"],))
+                else:
+                    LOG.debug("Not inserting because dry-run is enabled")
         ## FOR
     ## FOR
     db.commit()
