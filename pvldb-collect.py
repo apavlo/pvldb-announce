@@ -166,9 +166,10 @@ if __name__ == '__main__':
     ## ----------------------------------------------
     
     # Create the database if we don't have it
-    if not os.path.exists(DB_PATH):
+    if not os.path.exists(args['dbpath']):
+        LOG.info("Creating database file %s", args['dbpath'])
         createDatabase()
-    db = sqlite3.connect(DB_PATH)
+    db = sqlite3.connect(args['dbpath'])
     cur = db.cursor()
         
     # Get the volume URLs

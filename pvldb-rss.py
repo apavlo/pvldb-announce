@@ -3,16 +3,9 @@
 
 import os
 import sys
-import re
-import urllib.request, urllib.parse, urllib.error
 import logging
-import pytz
-import time
 import argparse
 import sqlite3
-from datetime import datetime
-from datetime import tzinfo
-from pprint import pprint, pformat
 from feedgen.feed import FeedGenerator
 
 from config import *
@@ -28,8 +21,6 @@ LOG_handler.setFormatter(LOG_formatter)
 LOG.addHandler(LOG_handler)
 LOG.setLevel(logging.INFO)
 
-
-
 ## ==============================================
 ## writeRSS
 ## ==============================================
@@ -39,7 +30,7 @@ def writeRSS(papers, output):
     fg.title(RSS_TITLE)
     fg.subtitle(RSS_SUBTITLE)
     fg.author(RSS_AUTHOR)
-    fg.link( href='http://www.vldb.org/pvldb/', rel='alternate' )
+    fg.link( href='https://www.vldb.org/pvldb/', rel='alternate' )
     fg.language('en')
     
     for p in papers:
@@ -71,13 +62,10 @@ def writeRSS(papers, output):
 ## ==============================================
 if __name__ == '__main__':
     aparser = argparse.ArgumentParser(description='PVLDB Announcements Script')
-    aparser.add_argument('dbpath', help='Database Path')
+    aparser.add_argument('dbpath', type=str, help='Database Path')
+    aparser.add_argument('rsspath', type=str, help='RSS output directory')
     aparser.add_argument("--debug", action='store_true')
 
-    ## RSS Parameters
-    agroup = aparser.add_argument_group('RSS Parameters')
-    agroup.add_argument('rss-path', type=str, help='RSS output directory')
-    
     args = vars(aparser.parse_args())
 
     ## ----------------------------------------------
@@ -88,13 +76,15 @@ if __name__ == '__main__':
     ## ----------------------------------------------
     
     # Create the database if we don't have it
-    if not os.path.exists(DB_PATH):
-        createDatabase()
-    db = sqlite3.connect(DB_PATH)
+    if not os.path.exists(args['dbpath']):
+        raise Exception("Database file %s does not exist", args['dbpath'])
+    db = sqlite3.connect(args['dbpath'])
     cur = db.cursor()
         
     # Always create the RSS files from scratch
-    assert args["rss-path"]
+    assert args["rsspath"]
+    if not os.path.exists(args["rsspath"]):
+        os.makedirs(args["rsspath"])
 
     sql = "SELECT link, title, authors, volume, number, published FROM papers ORDER BY volume ASC, number ASC, link"
     papers = [ ]
@@ -109,7 +99,7 @@ if __name__ == '__main__':
         }
         papers.append(paper)
     ## FOR
-    writeRSS(papers, args["rss-path"])
+    writeRSS(papers, args["rsspath"])
     
     db.close()
 ## MAIN

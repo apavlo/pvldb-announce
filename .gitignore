@@ -1,6 +1,8 @@
 pvldb-atom.xml
 pvldb-rss.xml
 *.db
+rss/
+.idea
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
