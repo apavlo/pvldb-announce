@@ -34,7 +34,7 @@ def writeRSS(papers, output):
     fg.language('en')
     
     for p in papers:
-        summary = "%(title)s\nAuthors: %(authors)s\nPVLDB Volume %(volume)d, Number %(number)d" % p
+        summary = "%(title)s\nAuthors: %(authors)s\n[PVLDB Volume %(volume)d, Number %(number)d]" % p
         
         fe = fg.add_entry()
         fe.author(name=p["authors"])
@@ -75,7 +75,6 @@ if __name__ == '__main__':
 
     ## ----------------------------------------------
     
-    # Create the database if we don't have it
     if not os.path.exists(args['dbpath']):
         raise Exception("Database file %s does not exist", args['dbpath'])
     db = sqlite3.connect(args['dbpath'])

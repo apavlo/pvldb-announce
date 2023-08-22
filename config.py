@@ -20,4 +20,6 @@ BASE_URL = "https://www.vldb.org"
 TWITTER_SLEEP_TIME = 1200 # seconds
 TWITTER_NUM_CHARS = 250
 
+MASTODON_NUM_CHARS = 1024
+
 SKIP = set([ "vol%d.html" % x for x in range(1, 5) ])
