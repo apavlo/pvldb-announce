@@ -121,6 +121,7 @@ if __name__ == '__main__':
     aparser.add_argument("--dry-run", action='store_true')
 
     aparser.add_argument('--limit', type=int, help='Number of papers to announce before stopping')
+    aparser.add_argument('--sleep', type=int, default=POST_SLEEP_TIME, help='How many seconds to sleep between each post')
     aparser.add_argument('--preference', type=str, help='Author ordering preference')
 
     ## Mastodon Parameters
@@ -220,7 +221,7 @@ if __name__ == '__main__':
         paper_count += 1
         if args["limit"] and paper_count >= args["limit"]:
             break
-        LOG.warning("Sleeping for %d seconds..." % POST_SLEEP_TIME)
+        LOG.warning("Sleeping for %d seconds...", args["sleep"])
         time.sleep(POST_SLEEP_TIME)
     ## FOR
     
