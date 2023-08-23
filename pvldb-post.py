@@ -79,9 +79,9 @@ def postMastodon(args, paper):
     if not args["dry_run"]:
         if "image" in paper and paper["image"]:
             media = api.media_post(paper["image"], focus=(0, 0.85), description="Thumbnail: %(title)s" % paper)
-            status = api.status_post(post, media_ids=media)
+            status = api.status_post(post, visibility='public', media_ids=media)
         else:
-            status = api.status_post(post)
+            status = api.status_post(post, visibility='public')
         LOG.info("Wrote post to %s [status=%s]", args["mastodon_url"], str(status))
     else:
         LOG.debug("Not posting to mastodon because dry-run is enabled")
@@ -222,7 +222,7 @@ if __name__ == '__main__':
         if args["limit"] and paper_count >= args["limit"]:
             break
         LOG.warning("Sleeping for %d seconds...", args["sleep"])
-        time.sleep(POST_SLEEP_TIME)
+        time.sleep(args["sleep"])
     ## FOR
     
     db.close()
