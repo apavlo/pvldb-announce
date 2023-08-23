@@ -17,9 +17,10 @@ BASE_URL = "https://www.vldb.org"
 
 # DB_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), "pvldb.db")
 
-TWITTER_SLEEP_TIME = 1200 # seconds
-TWITTER_NUM_CHARS = 250
-
-MASTODON_NUM_CHARS = 1024
+POST_SLEEP_TIME = 1200 # seconds
+POST_MAX_NUM_CHARS = {
+    "twitter": 250,
+    "mastodon": 1024
+}
 
 SKIP = set([ "vol%d.html" % x for x in range(1, 5) ])

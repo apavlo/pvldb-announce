@@ -33,7 +33,7 @@ LOG.setLevel(logging.INFO)
 ## ==============================================
 ## postMastodon
 ## ==============================================
-def postMastodon(args, db, paper):
+def postMastodon(args, paper):
     LOG.info("Posting paper '%s' to Mastodon!", paper["title"])
 
     api = Mastodon(
@@ -42,23 +42,38 @@ def postMastodon(args, db, paper):
     )
 
     post = u"Vol:%(volume)d No:%(number)d → %(title)s" % paper
-    if len(post)+24 > MASTODON_NUM_CHARS:
-        remaining = MASTODON_NUM_CHARS - (len(post)+24)
+    if len(post)+24 > POST_MAX_NUM_CHARS["mastodon"]:
+        remaining = POST_MAX_NUM_CHARS["mastodon"] - (len(post)+24)
         post = post[:remaining-3] + u"..."
     post += " " + paper["link"]
     
     LOG.debug("%s [Length=%d]", post, len(post))
-
     status = api.status_post(post)
     LOG.info("Wrote post to %s [status=%s]", args["mastodon_url"], str(status))
-    
-    cur = db.cursor()
-    sql = "UPDATE papers SET mastodon = 1 WHERE link = ?"
-    cur.execute(sql, (paper["link"], ))
-    db.commit()
-    
-## DEF
 
+## ==============================================
+## postTwitter
+## ==============================================
+def postTwitter(args, paper):
+    LOG.info("Posting paper '%s' to twitter!" % paper["title"])
+
+    api = None
+    # api = twitter.Api(consumer_key=args["twitter_consumer_key"],
+    #                   consumer_secret=args["twitter_consumer_secret"],
+    #                   access_token_key=args["twitter_access_token"],
+    #                   access_token_secret=args["twitter_access_secret"])
+
+    # paper["separator"] = u"→".encode('unicode-escape')
+
+    tweet = "Vol:%(volume)d No:%(number)d → %(title)s" % paper
+    if len(tweet) + 24 > POST_MAX_NUM_CHARS["twitter"]:
+        remaining = POST_MAX_NUM_CHARS["twitter"] - (len(tweet) + 24)
+        tweet = tweet[:remaining - 3] + "..."
+    tweet += " " + paper["link"]
+
+    LOG.debug("%s [Length=%d]" % (tweet, len(tweet)))
+    status = api.PostUpdate(tweet)
+    LOG.info("Posted tweet [status=%s]", str(status))
 
 ## ==============================================
 ## main
@@ -93,6 +108,7 @@ if __name__ == '__main__':
 
     # If they want to post to a service, make sure they give us all the info
     # that we need to do this
+    post_targets = [ ]
     for check in ["mastodon", "twitter"]:
         if check not in args or not args[check]: continue
         LOG.debug("Checking %s input arguments", check)
@@ -101,6 +117,7 @@ if __name__ == '__main__':
                 LOG.error("Missing '%s' input parameter for %s", k, check)
                 sys.exit(1)
         ## FOR
+        post_targets.append(check)
     ## IF
 
     ## ----------------------------------------------
@@ -110,8 +127,16 @@ if __name__ == '__main__':
     db = sqlite3.connect(args['dbpath'])
     cur = db.cursor()
 
-    ## Post new papers to Twitter
-    sql = "SELECT * FROM papers WHERE twitter = 0 ORDER BY volume ASC, number ASC, "
+    ## Post new papers
+
+    where = [ ]
+    for target in post_targets:
+        if check in args and args[check]:
+            where.append("%s = 0" % check)
+    assert len(where)
+
+    sql = "SELECT * FROM papers WHERE %s " % " OR ".join(where)
+    sql += "ORDER BY volume ASC, number ASC, "
     if 'preference' in args and args['preference']:
         sql += "CASE WHEN authors LIKE '%" + args['preference'] + "%' THEN NULL ELSE link END DESC"
     else:
@@ -132,12 +157,24 @@ if __name__ == '__main__':
     ## FOR
     paper_count = 0
     for paper in new_papers:
-        postMastodon(args, db, paper)
+        for target in post_targets:
+            try:
+                if target == "mastodon":
+                    postMastodon(args, paper)
+                elif target == "twitter":
+                    # postTwitter(args, paper)
+                    pass
+                cur = db.cursor()
+                sql = "UPDATE papers SET %s = 1 WHERE link = ?" % target
+                cur.execute(sql, (paper["link"],))
+                db.commit()
+            except:
+                raise
         paper_count += 1
-        if args["twitter_limit"] and paper_count > args["twitter_limit"]:
+        if args["limit"] and paper_count > args["limit"]:
             break
-        LOG.warn("Sleeping for %d seconds..." % TWITTER_SLEEP_TIME)
-        time.sleep(TWITTER_SLEEP_TIME)
+        LOG.warning("Sleeping for %d seconds..." % POST_SLEEP_TIME)
+        time.sleep(POST_SLEEP_TIME)
     ## FOR
     
     db.close()
