@@ -2,17 +2,14 @@
 # -*- coding: utf-8 -*-
 
 import os
-import sys
-import re
-import urllib
 import logging
-import pytz
 import time
 import argparse
 import sqlite3
+import requests
+import tempfile
+from pdf2image import convert_from_path
 from mastodon import Mastodon
-from datetime import datetime
-from datetime import tzinfo
 from pprint import pprint, pformat
 
 from config import *
@@ -28,7 +25,30 @@ LOG_handler.setFormatter(LOG_formatter)
 LOG.addHandler(LOG_handler)
 LOG.setLevel(logging.INFO)
 
+## ==============================================
+## getImage
+## ==============================================
+def getImage(pdf_url):
+    LOG.debug("Create thumbnail for '%s'", pdf_url)
+    # Get the filename from the URL
+    temp_dir = tempfile.gettempdir()
+    pdf_filename = "pvldb-" + os.path.basename(pdf_url)
+    pdf_path = os.path.join(temp_dir, pdf_filename)
 
+    # Download the PDF file
+    response = requests.get(pdf_url)
+    with open(pdf_path, 'wb') as pdf_file:
+        pdf_file.write(response.content)
+        LOG.debug("Downloaded PDF %s", pdf_path)
+
+    # Convert the downloaded PDF to PNG images
+    images = convert_from_path(pdf_path, first_page=0, last_page=1)
+    if images:
+        png_filename = f'{pdf_filename}.png'
+        png_path = os.path.join(temp_dir, png_filename)
+        images[0].save(png_path, 'PNG')
+        LOG.debug(f'Conversion successful. PNG image saved in temporary directory: {png_path}')
+        return png_path
 
 ## ==============================================
 ## postMastodon
@@ -42,14 +62,30 @@ def postMastodon(args, paper):
     )
 
     post = u"Vol:%(volume)d No:%(number)d → %(title)s" % paper
+    if paper["authors"]:
+        # Figure whether there is more than one author
+        if paper["authors"].find(",") != -1:
+            post += "\n👥 Authors"
+        else:
+            post += "\n👤 Author"
+        post += ": %(authors)s" % paper
+
     if len(post)+24 > POST_MAX_NUM_CHARS["mastodon"]:
         remaining = POST_MAX_NUM_CHARS["mastodon"] - (len(post)+24)
         post = post[:remaining-3] + u"..."
-    post += " " + paper["link"]
-    
-    LOG.debug("%s [Length=%d]", post, len(post))
-    status = api.status_post(post)
-    LOG.info("Wrote post to %s [status=%s]", args["mastodon_url"], str(status))
+    post += "\n📄 PDF: " + paper["link"]
+    LOG.debug("%s [Length=%d]: %s", "mastodon", len(post), post)
+
+    if not args["dry_run"]:
+        if "image" in paper and paper["image"]:
+            media = api.media_post(paper["image"], focus=(0, 0.85), description="Thumbnail: %(title)s" % paper)
+            status = api.status_post(post, media_ids=media)
+        else:
+            status = api.status_post(post)
+        LOG.info("Wrote post to %s [status=%s]", args["mastodon_url"], str(status))
+    else:
+        LOG.debug("Not posting to mastodon because dry-run is enabled")
+    return
 
 ## ==============================================
 ## postTwitter
@@ -82,6 +118,8 @@ if __name__ == '__main__':
     aparser = argparse.ArgumentParser(description='PVLDB Announcements Script')
     aparser.add_argument('dbpath', help='Database Path')
     aparser.add_argument("--debug", action='store_true')
+    aparser.add_argument("--dry-run", action='store_true')
+
     aparser.add_argument('--limit', type=int, help='Number of papers to announce before stopping')
     aparser.add_argument('--preference', type=str, help='Author ordering preference')
 
@@ -109,16 +147,18 @@ if __name__ == '__main__':
     # If they want to post to a service, make sure they give us all the info
     # that we need to do this
     post_targets = [ ]
-    for check in ["mastodon", "twitter"]:
-        if check not in args or not args[check]: continue
-        LOG.debug("Checking %s input arguments", check)
+    all_targets = ["mastodon", "twitter"]
+    for target in all_targets:
+        if target not in args or not args[target]: continue
+        LOG.debug("Checking %s input arguments", target)
         for k in args.keys():
-            if k.startswith(check) and args[k] is None:
-                LOG.error("Missing '%s' input parameter for %s", k, check)
+            if k.startswith(target) and args[k] is None:
+                LOG.error("Missing '%s' input parameter for %s", k, target)
                 sys.exit(1)
         ## FOR
-        post_targets.append(check)
-    ## IF
+        post_targets.append(target)
+    if not post_targets:
+        raise Exception("No post target was specified [%s]", ",".join(all_targets))
 
     ## ----------------------------------------------
 
@@ -131,8 +171,8 @@ if __name__ == '__main__':
 
     where = [ ]
     for target in post_targets:
-        if check in args and args[check]:
-            where.append("%s = 0" % check)
+        if target in args and args[target]:
+            where.append("%s = 0" % target)
     assert len(where)
 
     sql = "SELECT * FROM papers WHERE %s " % " OR ".join(where)
@@ -157,6 +197,10 @@ if __name__ == '__main__':
     ## FOR
     paper_count = 0
     for paper in new_papers:
+        # Get a PNG image of the first page
+        paper["image"] = getImage(paper["link"])
+        assert paper["image"]
+
         for target in post_targets:
             try:
                 if target == "mastodon":
@@ -166,12 +210,15 @@ if __name__ == '__main__':
                     pass
                 cur = db.cursor()
                 sql = "UPDATE papers SET %s = 1 WHERE link = ?" % target
-                cur.execute(sql, (paper["link"],))
-                db.commit()
+                if not args["dry_run"]:
+                    cur.execute(sql, (paper["link"],))
+                    db.commit()
+                else:
+                    LOG.debug("Not updating %s [%s] because dry-run is enabled", os.path.basename(paper["link"]), target)
             except:
                 raise
         paper_count += 1
-        if args["limit"] and paper_count > args["limit"]:
+        if args["limit"] and paper_count >= args["limit"]:
             break
         LOG.warning("Sleeping for %d seconds..." % POST_SLEEP_TIME)
         time.sleep(POST_SLEEP_TIME)
