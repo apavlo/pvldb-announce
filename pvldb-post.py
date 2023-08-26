@@ -9,8 +9,10 @@ import sqlite3
 import requests
 import tempfile
 from pdf2image import convert_from_path
-from mastodon import Mastodon
 from pprint import pprint, pformat
+
+import tweepy
+from mastodon import Mastodon
 
 from config import *
 
@@ -36,19 +38,21 @@ def getImage(pdf_url):
     pdf_path = os.path.join(temp_dir, pdf_filename)
 
     # Download the PDF file
-    response = requests.get(pdf_url)
-    with open(pdf_path, 'wb') as pdf_file:
-        pdf_file.write(response.content)
-        LOG.debug("Downloaded PDF %s", pdf_path)
+    if not os.path.exists(pdf_path):
+        response = requests.get(pdf_url)
+        with open(pdf_path, 'wb') as pdf_file:
+            pdf_file.write(response.content)
+            LOG.debug("Downloaded PDF %s", pdf_path)
 
     # Convert the downloaded PDF to PNG images
-    images = convert_from_path(pdf_path, first_page=0, last_page=1)
-    if images:
-        png_filename = f'{pdf_filename}.png'
-        png_path = os.path.join(temp_dir, png_filename)
-        images[0].save(png_path, 'PNG')
-        LOG.debug(f'Conversion successful. PNG image saved in temporary directory: {png_path}')
-        return png_path
+    png_filename = f'{pdf_filename}.png'
+    png_path = os.path.join(temp_dir, png_filename)
+    if not os.path.exists(png_path):
+        images = convert_from_path(pdf_path, first_page=0, last_page=1)
+        if images:
+            images[0].save(png_path, 'PNG')
+            LOG.debug(f'Conversion successful. PNG image saved in temporary directory: {png_path}')
+    return png_path
 
 ## ==============================================
 ## postMastodon
@@ -93,23 +97,39 @@ def postMastodon(args, paper):
 def postTwitter(args, paper):
     LOG.info("Posting paper '%s' to twitter!" % paper["title"])
 
-    api = None
-    # api = twitter.Api(consumer_key=args["twitter_consumer_key"],
-    #                   consumer_secret=args["twitter_consumer_secret"],
-    #                   access_token_key=args["twitter_access_token"],
-    #                   access_token_secret=args["twitter_access_secret"])
+    auth = tweepy.OAuthHandler(args['twitter_api_key'], args['twitter_api_secret'])
+    auth.set_access_token(args['twitter_access_token'], args['twitter_access_secret'])
+    api = tweepy.API(auth)
 
-    # paper["separator"] = u"→".encode('unicode-escape')
+    client = tweepy.Client(
+        bearer_token=args['twitter_bearer_token'],
+        consumer_key=args['twitter_api_key'],
+        consumer_secret=args['twitter_api_secret'],
+        access_token=args['twitter_api_key'],
+        access_token_secret=args['twitter_access_secret']
+    )
 
-    tweet = "Vol:%(volume)d No:%(number)d → %(title)s" % paper
-    if len(tweet) + 24 > POST_MAX_NUM_CHARS["twitter"]:
-        remaining = POST_MAX_NUM_CHARS["twitter"] - (len(tweet) + 24)
-        tweet = tweet[:remaining - 3] + "..."
-    tweet += " " + paper["link"]
+    post = "Vol:%(volume)d No:%(number)d → %(title)s" % paper
+    if len(post) + 24 > POST_MAX_NUM_CHARS["twitter"]:
+        remaining = POST_MAX_NUM_CHARS["twitter"] - (len(post) + 24)
+        post = post[:remaining - 3] + "..."
+    post += " " + paper["link"]
+    LOG.debug("%s [Length=%d]" % (post, len(post)))
 
-    LOG.debug("%s [Length=%d]" % (tweet, len(tweet)))
-    status = api.PostUpdate(tweet)
+    if not args["dry_run"]:
+        if not args['no_image'] and "image" in paper and paper["image"]:
+            media = api.media_upload(paper["image"])
+            LOG.debug(media)
+            status = client.create_tweet(text=post, media_ids=[media.media_id])
+            # status = api.update_status(status=post, media_ids=[media.media_id])
+        else:
+            status = client.create_tweet(text=post)
+            # status = api.update_status(status=post)
+    else:
+        LOG.debug("Not posting to twitter because dry-run is enabled")
+
     LOG.info("Posted tweet [status=%s]", str(status))
+    return
 
 ## ==============================================
 ## main
@@ -121,6 +141,7 @@ if __name__ == '__main__':
     aparser.add_argument("--dry-run", action='store_true')
 
     aparser.add_argument('--limit', type=int, help='Number of papers to announce before stopping')
+    aparser.add_argument('--no-image', action='store_true', help='Do not post images')
     aparser.add_argument('--sleep', type=int, default=POST_SLEEP_TIME, help='How many seconds to sleep between each post')
     aparser.add_argument('--preference', type=str, help='Author ordering preference')
 
@@ -133,10 +154,11 @@ if __name__ == '__main__':
     ## Twitter Parameters
     agroup = aparser.add_argument_group('Twitter Parameters')
     agroup.add_argument('--twitter', action='store_true', help='Post announcements on Twitter')
-    agroup.add_argument('--twitter-consumer-key', type=str, help='Twitter Consumer Key')
-    agroup.add_argument('--twitter-consumer-secret', type=str, help='Twitter Consumer Secret')
+    agroup.add_argument('--twitter-api-key', type=str, help='Twitter API Key')
+    agroup.add_argument('--twitter-api-secret', type=str, help='Twitter API Secret')
     agroup.add_argument('--twitter-access-token', type=str, help='Twitter Access Token Key')
     agroup.add_argument('--twitter-access-secret', type=str, help='Twitter Access Token Secret')
+    agroup.add_argument('--twitter-bearer-token', type=str, help='Twitter Bearer Token')
 
     args = vars(aparser.parse_args())
 
@@ -164,7 +186,7 @@ if __name__ == '__main__':
     ## ----------------------------------------------
 
     if not os.path.exists(args['dbpath']):
-        raise Exception("Database file %s does not exist", args['dbpath'])
+        raise Exception("Database file '%s' does not exist" % args['dbpath'])
     db = sqlite3.connect(args['dbpath'])
     cur = db.cursor()
 
@@ -207,8 +229,7 @@ if __name__ == '__main__':
                 if target == "mastodon":
                     postMastodon(args, paper)
                 elif target == "twitter":
-                    # postTwitter(args, paper)
-                    pass
+                    postTwitter(args, paper)
                 cur = db.cursor()
                 sql = "UPDATE papers SET %s = 1 WHERE link = ?" % target
                 if not args["dry_run"]:
