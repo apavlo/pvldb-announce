@@ -74,8 +74,8 @@ def postMastodon(args, paper):
             post += "\n👤 Author"
         post += ": %(authors)s" % paper
 
-    if len(post)+24 > POST_MAX_NUM_CHARS["mastodon"]:
-        remaining = POST_MAX_NUM_CHARS["mastodon"] - (len(post)+24)
+    if len(post)+70 > POST_MAX_NUM_CHARS["mastodon"]:
+        remaining = POST_MAX_NUM_CHARS["mastodon"] - (len(post)+70)
         post = post[:remaining-3] + u"..."
     post += "\n📄 PDF: " + paper["link"]
     LOG.debug("%s [Length=%d]: %s", "mastodon", len(post), post)
