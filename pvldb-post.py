@@ -97,17 +97,17 @@ def postMastodon(args, paper):
 def postTwitter(args, paper):
     LOG.info("Posting paper '%s' to twitter!" % paper["title"])
 
+    client = tweepy.Client(
+        # bearer_token=args['twitter_bearer_token'],
+        consumer_key=args['twitter_api_key'],
+        consumer_secret=args['twitter_api_secret'],
+        access_token=args['twitter_access_token'],
+        access_token_secret=args['twitter_access_secret']
+    )
+
     auth = tweepy.OAuthHandler(args['twitter_api_key'], args['twitter_api_secret'])
     auth.set_access_token(args['twitter_access_token'], args['twitter_access_secret'])
     api = tweepy.API(auth)
-
-    client = tweepy.Client(
-        bearer_token=args['twitter_bearer_token'],
-        consumer_key=args['twitter_api_key'],
-        consumer_secret=args['twitter_api_secret'],
-        access_token=args['twitter_api_key'],
-        access_token_secret=args['twitter_access_secret']
-    )
 
     post = "Vol:%(volume)d No:%(number)d → %(title)s" % paper
     if len(post) + 24 > POST_MAX_NUM_CHARS["twitter"]:
@@ -120,15 +120,15 @@ def postTwitter(args, paper):
         if not args['no_image'] and "image" in paper and paper["image"]:
             media = api.media_upload(paper["image"])
             LOG.debug(media)
-            status = client.create_tweet(text=post, media_ids=[media.media_id])
+            status = client.create_tweet(text=post, media_ids=[media.media_id], user_auth=True)
             # status = api.update_status(status=post, media_ids=[media.media_id])
         else:
-            status = client.create_tweet(text=post)
+            status = client.create_tweet(text=post, user_auth=True)
             # status = api.update_status(status=post)
+        LOG.info("Posted tweet [status=%s]", str(status))
     else:
         LOG.debug("Not posting to twitter because dry-run is enabled")
 
-    LOG.info("Posted tweet [status=%s]", str(status))
     return
 
 ## ==============================================
@@ -221,8 +221,11 @@ if __name__ == '__main__':
     paper_count = 0
     for paper in new_papers:
         # Get a PNG image of the first page
-        paper["image"] = getImage(paper["link"])
-        assert paper["image"]
+        if not args['no_image']:
+            paper["image"] = getImage(paper["link"])
+            assert paper["image"]
+        else:
+            paper["image"] = ""
 
         for target in post_targets:
             try:
