@@ -13,6 +13,7 @@ from pprint import pprint, pformat
 
 import tweepy
 from mastodon import Mastodon
+from atproto import Client
 
 from config import *
 
@@ -54,6 +55,26 @@ def getImage(pdf_url):
             LOG.debug(f'Conversion successful. PNG image saved in temporary directory: {png_path}')
     return png_path
 
+def getAuthorCaption(paper):
+    # Figure whether there is more than one author
+    if paper["authors"].find(",") != -1:
+        caption = "👥 Authors"
+    else:
+        caption = "👤 Author"
+    caption += ": %(authors)s" % paper
+    return caption
+
+def getPaperPost(paper, max_chars : int):
+    post = u"Vol:%(volume)d No:%(number)d → %(title)s" % paper
+    if paper["authors"]:
+        post += "\n" + getAuthorCaption(paper)
+    if len(post)+70 > max_chars:
+        remaining = max_chars - (len(post)+70)
+        post = post[:remaining-3] + u"..."
+    post += "\n📄 PDF: " + paper["link"]
+
+    return post
+
 ## ==============================================
 ## postMastodon
 ## ==============================================
@@ -65,30 +86,50 @@ def postMastodon(args, paper):
         api_base_url=args["mastodon_url"]
     )
 
-    post = u"Vol:%(volume)d No:%(number)d → %(title)s" % paper
-    if paper["authors"]:
-        # Figure whether there is more than one author
-        if paper["authors"].find(",") != -1:
-            post += "\n👥 Authors"
-        else:
-            post += "\n👤 Author"
-        post += ": %(authors)s" % paper
-
-    if len(post)+70 > POST_MAX_NUM_CHARS["mastodon"]:
-        remaining = POST_MAX_NUM_CHARS["mastodon"] - (len(post)+70)
-        post = post[:remaining-3] + u"..."
-    post += "\n📄 PDF: " + paper["link"]
+    post = getPaperPost(paper, POST_MAX_NUM_CHARS["mastodon"])
     LOG.debug("%s [Length=%d]: %s", "mastodon", len(post), post)
 
     if not args["dry_run"]:
         if "image" in paper and paper["image"]:
-            media = api.media_post(paper["image"], focus=(0, 0.85), description="Thumbnail: %(title)s" % paper)
+            caption = ""
+            if not args["no_caption"]:
+                caption = "Thumbnail: %(title)s" % paper
+
+            media = api.media_post(paper["image"], focus=(0, 0.85), description=caption)
             status = api.status_post(post, visibility='public', media_ids=media)
         else:
             status = api.status_post(post, visibility='public')
         LOG.info("Wrote post to %s [status=%s]", args["mastodon_url"], str(status))
     else:
         LOG.debug("Not posting to mastodon because dry-run is enabled")
+    return
+
+## ==============================================
+## postBluesky
+## ==============================================
+def postBluesky(args, paper):
+    LOG.info("Posting paper '%s' to Bluesky!", paper["title"])
+
+    api = Client()
+    api.login(args["bluesky_handle"], args["bluesky_password"])
+
+    post = getPaperPost(paper, POST_MAX_NUM_CHARS["bluesky"])
+    LOG.debug("%s [Length=%d]: %s", "bluesky", len(post), post)
+
+    if not args["dry_run"]:
+        if "image" in paper and paper["image"]:
+            caption = ""
+            if not args["no_caption"]:
+                caption = "Thumbnail: %(title)s" % paper
+
+            with open(paper["image"], 'rb') as f:
+                img_data = f.read()
+            status = api.send_image(text=post, image=img_data, image_alt=caption)
+        else:
+            status = api.send_post(text=post)
+        LOG.info("Wrote post to %s [status=%s]", "bluesky", str(status))
+    else:
+        LOG.debug("Not posting to bluesky because dry-run is enabled")
     return
 
 ## ==============================================
@@ -119,9 +160,18 @@ def postTwitter(args, paper):
     if not args["dry_run"]:
         if not args['no_image'] and "image" in paper and paper["image"]:
             media = api.media_upload(paper["image"])
-            LOG.debug(media)
+            LOG.debug("Media:", media)
+
+            if not args['no_caption']:
+                caption = "%(title)s" % paper
+                if paper["authors"]:
+                    caption += "\n" + getAuthorCaption(paper)
+                LOG.debug("Caption:", caption)
+                api.update_status(status=caption, media_ids=[media.media_id])
+            else:
+                LOG.debug("Skipping image captions")
+
             status = client.create_tweet(text=post, media_ids=[media.media_id], user_auth=True)
-            # status = api.update_status(status=post, media_ids=[media.media_id])
         else:
             status = client.create_tweet(text=post, user_auth=True)
             # status = api.update_status(status=post)
@@ -142,14 +192,21 @@ if __name__ == '__main__':
 
     aparser.add_argument('--limit', type=int, help='Number of papers to announce before stopping')
     aparser.add_argument('--no-image', action='store_true', help='Do not post images')
+    aparser.add_argument('--no-caption', action='store_true', help='Do not include captions for images')
     aparser.add_argument('--sleep', type=int, default=POST_SLEEP_TIME, help='How many seconds to sleep between each post')
     aparser.add_argument('--preference', type=str, help='Author ordering preference')
 
     ## Mastodon Parameters
     agroup = aparser.add_argument_group('Mastodon Parameters')
-    agroup.add_argument('--mastodon', action='store_true', help='Post announcements on Twitter')
+    agroup.add_argument('--mastodon', action='store_true', help='Post announcements on Mastodon')
     agroup.add_argument('--mastodon-api-key', type=str, help='Mastodon API Key')
     agroup.add_argument('--mastodon-url', type=str, help='Mastodon Server URL')
+
+    ## Bluesky Parameters
+    agroup = aparser.add_argument_group('Bluesky Parameters')
+    agroup.add_argument('--bluesky', action='store_true', help='Post announcements on Bluesky')
+    agroup.add_argument('--bluesky-handle', type=str, help='Bluesky Handle')
+    agroup.add_argument('--bluesky-password', type=str, help='Bluesky App Password')
 
     ## Twitter Parameters
     agroup = aparser.add_argument_group('Twitter Parameters')
@@ -170,7 +227,7 @@ if __name__ == '__main__':
     # If they want to post to a service, make sure they give us all the info
     # that we need to do this
     post_targets = [ ]
-    all_targets = ["mastodon", "twitter"]
+    all_targets = ["mastodon", "twitter", "bluesky"]
     for target in all_targets:
         if target not in args or not args[target]: continue
         LOG.debug("Checking %s input arguments", target)
@@ -231,6 +288,8 @@ if __name__ == '__main__':
             try:
                 if target == "mastodon":
                     postMastodon(args, paper)
+                elif target == "bluesky":
+                    postBluesky(args, paper)
                 elif target == "twitter":
                     postTwitter(args, paper)
                 cur = db.cursor()

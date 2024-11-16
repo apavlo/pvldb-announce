@@ -20,7 +20,8 @@ BASE_URL = "https://www.vldb.org"
 POST_SLEEP_TIME = 1200 # seconds
 POST_MAX_NUM_CHARS = {
     "twitter": 250,
-    "mastodon": 500
+    "mastodon": 500,
+    "bluesky": 300,
 }
 
 SKIP = set([ "vol%d.html" % x for x in range(1, 5) ])
