@@ -96,7 +96,11 @@ def getPapers(volume, vol_url):
         return (vol_papers)
 
     json_data = json.loads(data.contents[0])
-    volume_data = json_data["props"]["pageProps"]["groupedIssues"]
+    try:
+        volume_data = json_data["props"]["pageProps"]["groupedIssues"]
+    except:
+        LOG.warning("Invalid JSON data for volume %d", volume)
+        return (vol_papers)
 
     for number, number_papers in volume_data.items():
         number = int(number)
