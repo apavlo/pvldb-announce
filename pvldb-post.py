@@ -8,6 +8,7 @@ import argparse
 import sqlite3
 import requests
 import tempfile
+from PIL import Image
 from pdf2image import convert_from_path
 from pprint import pprint, pformat
 
@@ -46,14 +47,59 @@ def getImage(pdf_url):
             LOG.debug("Downloaded PDF %s", pdf_path)
 
     # Convert the downloaded PDF to PNG images
-    png_filename = f'{pdf_filename}.png'
-    png_path = os.path.join(temp_dir, png_filename)
-    if not os.path.exists(png_path):
+    img_filename = f'{pdf_filename}.png'
+    img_path = os.path.join(temp_dir, img_filename)
+    if not os.path.exists(img_path):
         images = convert_from_path(pdf_path, first_page=0, last_page=1)
         if images:
-            images[0].save(png_path, 'PNG')
-            LOG.debug(f'Conversion successful. PNG image saved in temporary directory: {png_path}')
-    return png_path
+            images[0].save(img_path, 'PNG')
+            LOG.debug(f'Conversion successful. Image saved in temporary directory: {img_path}')
+    else:
+        LOG.debug(f'Reusing existing image: {img_path}')
+    return img_path
+
+## ==============================================
+## resizeImage
+## ==============================================
+def resizeImage(img_path, max_size_kb: int, step=5):
+    """
+    Resize a PNG file incrementally until its size is below the given threshold.
+
+    :param img_path: Path to the PNG file.
+    :param max_size_kb: Maximum allowed file size in KB.
+    :param step: Percentage decrease in image size per iteration.
+    """
+    max_size_bytes = max_size_kb * 1024
+
+    if os.path.getsize(img_path) <= max_size_bytes:
+      return img_path
+
+    image = Image.open(img_path)
+    width, height = image.size
+    LOG.debug(f"Compressing Image '{img_path}' // (width={width}, height={height}) // File Size: {os.path.getsize(img_path) / 1024:.2f} KB")
+
+    # First try converting it to JPG to see if that makes it small enough
+    jpg_path = img_path.replace(".png", ".jpg")
+    image.convert("RGB").save(jpg_path, format='JPEG', quality=85, optimize=True)
+    if os.path.getsize(jpg_path) < max_size_bytes:
+        LOG.debug(f"Converted to JPG with file size: {os.path.getsize(jpg_path) / 1024:.2f} KB")
+        img_path = jpg_path
+    else:
+      LOG.debug("Incrementally resizing until image is small enough")
+      while os.path.getsize(img_path) > max_size_bytes:
+          width = int(width * (1 - step / 100))
+          height = int(height * (1 - step / 100))
+          image = image.resize((width, height), Image.LANCZOS)
+
+          temp_path = img_path.replace(".png", "_temp.png")
+          image.save(temp_path, format='PNG', optimize=True)
+
+          if os.path.getsize(temp_path) < max_size_bytes:
+              img_path = temp_path
+              break
+    LOG.debug(f"Final Image '{img_path}' // (width={width}, height={height}) // File Size: {os.path.getsize(img_path) / 1024:.2f} KB")
+
+    return img_path
 
 def getAuthorCaption(paper):
     # Figure whether there is more than one author
@@ -122,7 +168,9 @@ def postBluesky(args, paper):
             if not args["no_caption"]:
                 caption = "Thumbnail: %(title)s" % paper
 
-            with open(paper["image"], 'rb') as f:
+            # Bluesky has limits on image file size, so either convert it to a JPG or resize it
+            img_path = resizeImage(paper["image"], 950)
+            with open(img_path, 'rb') as f:
                 img_data = f.read()
             status = api.send_image(text=post, image=img_data, image_alt=caption)
         else:
