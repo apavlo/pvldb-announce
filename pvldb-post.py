@@ -10,6 +10,7 @@ import requests
 import tempfile
 from PIL import Image
 from pdf2image import convert_from_path
+from pdf2image.exceptions import PDFPageCountError
 from pprint import pprint, pformat
 
 import tweepy
@@ -44,7 +45,9 @@ def getImage(pdf_url):
         response = requests.get(pdf_url)
         with open(pdf_path, 'wb') as pdf_file:
             pdf_file.write(response.content)
-            LOG.debug("Downloaded PDF %s", pdf_path)
+            LOG.debug(f"Downloaded PDF {pdf_path}")
+    else:
+        LOG.debug(f"Reusing cached PDF {pdf_path}")
 
     # Convert the downloaded PDF to PNG images
     img_filename = f'{pdf_filename}.png'
@@ -148,7 +151,8 @@ def postMastodon(args, paper):
         LOG.info("Wrote post to %s [status=%s]", args["mastodon_url"], str(status))
     else:
         LOG.debug("Not posting to mastodon because dry-run is enabled")
-    return
+
+    return PostStatus.SUCCESS
 
 ## ==============================================
 ## postBluesky
@@ -178,7 +182,8 @@ def postBluesky(args, paper):
         LOG.info("Wrote post to %s [status=%s]", "bluesky", str(status))
     else:
         LOG.debug("Not posting to bluesky because dry-run is enabled")
-    return
+
+    return PostStatus.SUCCESS
 
 ## ==============================================
 ## postTwitter
@@ -227,7 +232,7 @@ def postTwitter(args, paper):
     else:
         LOG.debug("Not posting to twitter because dry-run is enabled")
 
-    return
+    return PostStatus.SUCCESS
 
 ## ==============================================
 ## main
@@ -300,7 +305,7 @@ if __name__ == '__main__':
     where = [ ]
     for target in post_targets:
         if target in args and args[target]:
-            where.append("%s = 0" % target)
+            where.append(f"{target} = {PostStatus.PENDING.value}")
     assert len(where)
 
     sql = "SELECT * FROM papers WHERE %s " % " OR ".join(where)
@@ -325,25 +330,38 @@ if __name__ == '__main__':
     ## FOR
     paper_count = 0
     for paper in new_papers:
+        status = PostStatus.PENDING
+
         # Get a PNG image of the first page
         if not args['no_image']:
-            paper["image"] = getImage(paper["link"])
-            assert paper["image"]
+            # We have been getting invalid PDFs that block the rest of the queue
+            # If we get an error when trying to convert the image, just mark it as failed
+            try:
+                paper["image"] = getImage(paper["link"])
+                assert paper["image"]
+            except PDFPageCountError:
+                LOG.error("Failed to generate image for " + paper["link"])
+                status = PostStatus.FAILED
         else:
             paper["image"] = ""
 
         for target in post_targets:
+            sql = f"UPDATE papers SET {target} = ? WHERE link = ?"
             try:
-                if target == "mastodon":
-                    postMastodon(args, paper)
-                elif target == "bluesky":
-                    postBluesky(args, paper)
-                elif target == "twitter":
-                    postTwitter(args, paper)
+                if status == PostStatus.PENDING:
+                    if target == "mastodon":
+                        postMastodon(args, paper)
+                        status == PostStatus.PENDING
+                    elif target == "bluesky":
+                        postBluesky(args, paper)
+                    elif target == "twitter":
+                        postTwitter(args, paper)
+
                 cur = db.cursor()
-                sql = "UPDATE papers SET %s = 1 WHERE link = ?" % target
                 if not args["dry_run"]:
-                    cur.execute(sql, (paper["link"],))
+                    assert status is not None
+                    LOG.debug(f"{sql} -> {status.value}")
+                    cur.execute(sql, (status.value, paper["link"],))
                     db.commit()
                 else:
                     LOG.debug("Not updating %s [%s] because dry-run is enabled", os.path.basename(paper["link"]), target)

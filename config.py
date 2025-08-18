@@ -1,5 +1,6 @@
 import os
 import sys
+from enum import Enum
 
 ## ==============================================
 ## CONFIGURATION
@@ -25,3 +26,9 @@ POST_MAX_NUM_CHARS = {
 }
 
 SKIP = set([ "vol%d.html" % x for x in range(1, 5) ])
+
+
+class PostStatus(Enum):
+    FAILED = -1
+    PENDING = 0
+    SUCCESS = 1
