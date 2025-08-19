@@ -8,6 +8,7 @@ import argparse
 import sqlite3
 import requests
 import tempfile
+import sys
 from PIL import Image
 from pdf2image import convert_from_path
 from pdf2image.exceptions import PDFPageCountError
@@ -213,7 +214,7 @@ def postTwitter(args, paper):
     if not args["dry_run"]:
         if not args['no_image'] and "image" in paper and paper["image"]:
             media = api.media_upload(paper["image"])
-            LOG.debug("Media:", media)
+            LOG.debug(f"Media: {media}")
 
             if not args['no_caption']:
                 caption = "%(title)s" % paper
@@ -350,12 +351,11 @@ if __name__ == '__main__':
             try:
                 if status == PostStatus.PENDING:
                     if target == "mastodon":
-                        postMastodon(args, paper)
-                        status == PostStatus.PENDING
+                        status = postMastodon(args, paper)
                     elif target == "bluesky":
-                        postBluesky(args, paper)
+                        status = postBluesky(args, paper)
                     elif target == "twitter":
-                        postTwitter(args, paper)
+                        status = postTwitter(args, paper)
 
                 cur = db.cursor()
                 if not args["dry_run"]:
