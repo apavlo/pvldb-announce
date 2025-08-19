@@ -16,7 +16,7 @@ from pprint import pprint, pformat
 
 import tweepy
 from mastodon import Mastodon
-from atproto import Client
+from atproto import Client, client_utils
 
 from config import *
 
@@ -165,7 +165,14 @@ def postBluesky(args, paper):
     api.login(args["bluesky_handle"], args["bluesky_password"])
 
     post = getPaperPost(paper, POST_MAX_NUM_CHARS["bluesky"])
-    LOG.debug("%s [Length=%d]: %s", "bluesky", len(post), post)
+
+    # Construct the post. We have to do this to have correct URLs
+    builder = client_utils.TextBuilder()
+    parts = post.split(paper["link"])
+    assert len(parts) == 2, f"#parts={len(parts)}\n{post}"
+    builder.text(parts[0])
+    builder.link(paper["link"], paper["link"])
+    LOG.debug(f"bluesky [Length={len(post)}]: {builder.build_facets()}")
 
     if not args["dry_run"]:
         if "image" in paper and paper["image"]:
@@ -177,9 +184,9 @@ def postBluesky(args, paper):
             img_path = resizeImage(paper["image"], 950)
             with open(img_path, 'rb') as f:
                 img_data = f.read()
-            status = api.send_image(text=post, image=img_data, image_alt=caption)
+            status = api.send_image(text=builder, image=img_data, image_alt=caption)
         else:
-            status = api.send_post(text=post)
+            status = api.send_post(text=builder)
         LOG.info("Wrote post to %s [status=%s]", "bluesky", str(status))
     else:
         LOG.debug("Not posting to bluesky because dry-run is enabled")
